@@ -23,8 +23,24 @@ export function getRepoRoot(dir) {
 }
 
 /**
- * Creates an isolated git worktree + branch `foreman/<taskId>` so concurrent coding agents
- * never overwrite each other's working files.
+ * Safely unlinks a zero-copy node_modules directory junction/symlink inside a worktree
+ * WITHOUT touching the parent repository's actual node_modules folder!
+ */
+export function unlinkWorktreeNodeModules(wtPath) {
+  const nmPath = path.join(wtPath, 'node_modules');
+  try {
+    const st = fs.lstatSync(nmPath);
+    if (st.isSymbolicLink()) {
+      fs.unlinkSync(nmPath);
+    }
+  } catch {
+    // doesn't exist or not a symlink
+  }
+}
+
+/**
+ * Creates an isolated git worktree + branch `foreman/<taskId>` and links `node_modules` via
+ * zero-copy OS junction so `npm run build` / `tsc` works immediately in 0ms!
  */
 export function createIsolatedWorktree(repoDir, worktreesBaseDir, taskId) {
   const root = getRepoRoot(repoDir);
@@ -33,6 +49,7 @@ export function createIsolatedWorktree(repoDir, worktreesBaseDir, taskId) {
   const wtPath = path.join(worktreesBaseDir, safeId);
 
   if (fs.existsSync(wtPath)) {
+    unlinkWorktreeNodeModules(wtPath);
     try {
       git(['worktree', 'remove', '--force', wtPath], root);
     } catch {
@@ -46,6 +63,18 @@ export function createIsolatedWorktree(repoDir, worktreesBaseDir, taskId) {
   }
 
   git(['worktree', 'add', '-b', branchName, wtPath, 'HEAD'], root);
+
+  // Zero-copy link node_modules if present in repoRoot so Autoloop build/test runs instantly!
+  const rootNm = path.join(root, 'node_modules');
+  const wtNm = path.join(wtPath, 'node_modules');
+  if (fs.existsSync(rootNm) && !fs.existsSync(wtNm)) {
+    try {
+      fs.symlinkSync(rootNm, wtNm, process.platform === 'win32' ? 'junction' : 'dir');
+    } catch {
+      // non-fatal if symlink unavailable
+    }
+  }
+
   return { repoRoot: root, branchName, worktreePath: wtPath };
 }
 
@@ -59,12 +88,11 @@ export function inspectWorkspaceDiff(workDir) {
   try {
     const statusLines = git(['status', '--porcelain'], workDir)
       .split(/\r?\n/)
-      .filter(Boolean);
+      .filter((l) => Boolean(l) && !l.includes('node_modules'));
     const changedFiles = statusLines.map((l) => l.trim());
     const diffStat = git(['diff', '--stat', 'HEAD'], workDir);
     let diffPatch = git(['diff', 'HEAD'], workDir);
 
-    // Include preview of newly created untracked files
     for (const line of statusLines) {
       if (line.startsWith('?? ')) {
         const rel = line.slice(3).trim();
@@ -91,10 +119,6 @@ export function inspectWorkspaceDiff(workDir) {
   }
 }
 
-/**
- * Commits work inside the isolated worktree branch, merges it cleanly into the main repo's current branch,
- * and cleans up the temporary worktree!
- */
 export function approveAndMergeWorktree(task) {
   if (!task.worktreePath || !task.repoRoot || !fs.existsSync(task.worktreePath)) {
     return { merged: false, reason: 'Task did not run in an isolated git worktree.' };
@@ -102,6 +126,7 @@ export function approveAndMergeWorktree(task) {
   const wt = task.worktreePath;
   const root = task.repoRoot;
 
+  unlinkWorktreeNodeModules(wt);
   git(['add', '-A'], wt);
   const porcelain = git(['status', '--porcelain'], wt);
   if (porcelain) {
@@ -122,7 +147,6 @@ export function approveAndMergeWorktree(task) {
   const commitSha = git(['rev-parse', '--short', 'HEAD'], wt);
   git(['merge', '--no-ff', task.branchName, '-m', `Merge ${task.branchName} (${task.worker})`], root);
 
-  // Clean up worktree after successful merge
   try {
     git(['worktree', 'remove', '--force', wt], root);
     git(['branch', '-d', task.branchName], root);
@@ -135,6 +159,7 @@ export function approveAndMergeWorktree(task) {
 
 export function discardWorktree(task) {
   if (!task.worktreePath || !task.repoRoot) return { discarded: false };
+  unlinkWorktreeNodeModules(task.worktreePath);
   try {
     git(['worktree', 'remove', '--force', task.worktreePath], task.repoRoot);
   } catch {

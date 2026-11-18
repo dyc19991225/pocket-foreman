@@ -32,8 +32,11 @@ try {
   }
 
   assert.equal(state.tasks.length, 3);
+  assert.ok(Array.isArray(state.projects) && state.projects.length >= 1, 'Scanner must discover workspace projects');
   for (const t of state.tasks) {
     assert.equal(t.status, 'awaiting_approval', `Task ${t.id} should pause at awaiting_approval`);
+    assert.equal(t.verifyStatus, 'passed', 'Autoloop verifyStatus should be passed');
+    assert.ok(t.reviewScore >= 85, 'Cross-CLI reviewScore should be populated');
     assert.ok(t.branchName?.startsWith('foreman/'), 'Task should execute in isolated foreman/* branch');
     assert.ok(t.diffPatch.includes('export class RateLimiter'), 'Unified diff should capture generated TypeScript code');
   }
@@ -56,8 +59,8 @@ try {
     assert.equal(dRes.task.status, 'discarded');
   }
 
-  app.server.close();
-  console.log('✓ All Pocket Foreman E2E tests passed (CLI probe, 3-way git-worktree race, diff capture, ledger math & merge).');
+  app.close();
+  console.log('✓ All Pocket Foreman v2.0 E2E tests passed (Scanner, CLI probe, 3-way worktree race, Autoloop, Cross-Review & merge).');
 } finally {
   fs.rmSync(tmpDir, { recursive: true, force: true });
 }

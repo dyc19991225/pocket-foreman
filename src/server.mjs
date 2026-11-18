@@ -4,9 +4,11 @@ import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { detectWorkers } from './detector.mjs';
+import { scanWorkspaceProjects } from './scanner.mjs';
 import { approveAndMergeWorktree, discardWorktree } from './worktree.mjs';
-import { executeTask } from './runner.mjs';
+import { cancelRunningTask, executeTask } from './runner.mjs';
 import { ApprovalNotifier } from './notifier.mjs';
+import { TelegramRemoteDaemon } from './telegramDaemon.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const UI_DIR = path.join(__dirname, 'ui');
@@ -77,12 +79,89 @@ export function createForemanServer(store, port = 4788) {
     }
   };
 
+  const getScanRoots = () => {
+    const cfg = store.getConfig();
+    if (Array.isArray(cfg.scanRoots) && cfg.scanRoots.length > 0) return cfg.scanRoots;
+    // Default: parent workspace directory (e.g. e:\ai) + current cwd
+    return [path.dirname(process.cwd()), process.cwd()];
+  };
+
+  const dispatchBatch = async (body) => {
+    const workersList =
+      Array.isArray(body.workers) && body.workers.length > 0 ? body.workers : [body.worker || 'codex'];
+    const goal = String(body.goal || '').trim();
+    const prompt = String(body.prompt || goal).trim();
+    const workspace = path.resolve(body.workspace || process.cwd());
+
+    if (!goal) throw new Error('Missing task goal.');
+    if (!fs.existsSync(workspace)) throw new Error(`Workspace not found: ${workspace}`);
+
+    const raceGroupId = workersList.length > 1 ? `RACE-${Date.now().toString(36).toUpperCase()}` : null;
+    const created = [];
+
+    for (const w of workersList) {
+      const id = `${w.toUpperCase()}-${Math.random().toString(36).slice(2, 6).toUpperCase()}`;
+      const task = {
+        id,
+        raceGroupId,
+        goal,
+        prompt,
+        worker: w,
+        workspace,
+        permission: body.permission === 'write' ? 'write' : 'read-only',
+        verifyCmd: String(body.verifyCmd || '').trim(),
+        maxRetries: Number.isFinite(body.maxRetries) ? Number(body.maxRetries) : 2,
+        reviewer: body.reviewer ?? 'auto',
+        simulate: Boolean(body.simulate),
+        allowShell: Boolean(body.allowShell),
+        useWorktree: body.useWorktree !== false,
+        status: 'queued',
+        createdAt: new Date().toISOString(),
+      };
+      store.upsertTask(task);
+      created.push(task);
+      void executeTask(task, store, notifier, broadcast);
+    }
+    return { created, raceGroupId };
+  };
+
+  const approveById = async (taskId) => {
+    const task = store.getTask(taskId);
+    if (!task) throw new Error('Task not found');
+    const mergeRes = approveAndMergeWorktree(task);
+    task.status = 'merged';
+    task.mergedCommit = mergeRes.commitSha ?? null;
+    task.decidedAt = new Date().toISOString();
+    store.upsertTask(task);
+    broadcast({ type: 'task_updated', task });
+    return { ok: true, task, mergeRes };
+  };
+
+  const discardById = async (taskId) => {
+    const task = store.getTask(taskId);
+    if (!task) throw new Error('Task not found');
+    discardWorktree(task);
+    task.status = 'discarded';
+    task.decidedAt = new Date().toISOString();
+    store.upsertTask(task);
+    broadcast({ type: 'task_updated', task });
+    return { ok: true, task };
+  };
+
+  const tgDaemon = new TelegramRemoteDaemon({
+    store,
+    getProjects: () => scanWorkspaceProjects(getScanRoots()),
+    dispatchTask: async (opts) => (await dispatchBatch(opts)).created,
+    approveById,
+    discardById,
+  });
+  tgDaemon.syncWithConfig();
+
   const server = http.createServer(async (req, res) => {
     const url = new URL(req.url || '/', `http://${req.headers.host || 'localhost'}`);
     const pathname = url.pathname;
 
     try {
-      // 1. Real-time SSE stream
       if (req.method === 'GET' && pathname === '/api/events') {
         res.writeHead(200, {
           'Content-Type': 'text/event-stream',
@@ -95,14 +174,16 @@ export function createForemanServer(store, port = 4788) {
         return;
       }
 
-      // 2. Full system state
       if (req.method === 'GET' && pathname === '/api/state') {
+        const projects = scanWorkspaceProjects(getScanRoots());
         return json(res, 200, {
           workers: detectWorkers(url.searchParams.get('refresh') === '1'),
+          projects,
           tasks: store.getTasks(),
           stats: store.getStats(),
           mobileUrl: notifier.getMobileUrl(),
-          defaultWorkspace: process.cwd(),
+          tgRemoteActive: tgDaemon.running,
+          defaultWorkspace: projects[0]?.path || process.cwd(),
           config: {
             ...store.getConfig(),
             telegramBotToken: store.getConfig().telegramBotToken ? '***configured***' : '',
@@ -110,117 +191,64 @@ export function createForemanServer(store, port = 4788) {
         });
       }
 
-      // 3. Submit single task OR parallel Multi-Agent Arena Race!
       if (req.method === 'POST' && pathname === '/api/tasks') {
         const body = await readJsonBody(req);
-        const workersList = Array.isArray(body.workers) && body.workers.length > 0
-          ? body.workers
-          : [body.worker || 'codex'];
-        const goal = String(body.goal || '').trim();
-        const prompt = String(body.prompt || goal).trim();
-        const workspace = path.resolve(body.workspace || process.cwd());
-
-        if (!goal) return json(res, 400, { error: 'Missing task goal.' });
-        if (!fs.existsSync(workspace)) return json(res, 400, { error: `Workspace not found: ${workspace}` });
-
-        const raceGroupId = workersList.length > 1 ? `RACE-${Date.now().toString(36).toUpperCase()}` : null;
-        const created = [];
-
-        for (const w of workersList) {
-          const id = `${w.toUpperCase()}-${Math.random().toString(36).slice(2, 6).toUpperCase()}`;
-          const task = {
-            id,
-            raceGroupId,
-            goal,
-            prompt,
-            worker: w,
-            workspace,
-            permission: body.permission === 'write' ? 'write' : 'read-only',
-            simulate: Boolean(body.simulate),
-            allowShell: Boolean(body.allowShell),
-            useWorktree: body.useWorktree !== false,
-            status: 'queued',
-            createdAt: new Date().toISOString(),
-          };
-          store.upsertTask(task);
-          created.push(task);
-          // Fire asynchronously in parallel worktrees!
-          void executeTask(task, store, notifier, broadcast);
-        }
-
-        return json(res, 201, { created, raceGroupId });
+        const out = await dispatchBatch(body);
+        return json(res, 201, out);
       }
 
-      // 4. 1-Click Simulated 3-Way Worktree Arena Race (Zero API cost, real git worktrees & diffs!)
       if (req.method === 'POST' && pathname === '/api/tasks/demo-race') {
         const demoRepo = ensureDemoSandboxRepo(store.dataDir);
-        const raceGroupId = `RACE-${Date.now().toString(36).toUpperCase()}`;
-        const goal = '实现高并发滑动窗口/令牌桶 API 限流器 (RateLimiter)';
-        const prompt = 'Create a clean TypeScript RateLimiter utility with O(1) memory per active client.';
-        const created = [];
-
-        for (const w of ['codex', 'claude', 'agy']) {
-          const task = {
-            id: `${w.toUpperCase()}-${Math.random().toString(36).slice(2, 6).toUpperCase()}`,
-            raceGroupId,
-            goal,
-            prompt,
-            worker: w,
-            workspace: demoRepo,
-            permission: 'write',
-            simulate: true,
-            useWorktree: true,
-            status: 'queued',
-            createdAt: new Date().toISOString(),
-          };
-          store.upsertTask(task);
-          created.push(task);
-          void executeTask(task, store, notifier, broadcast);
-        }
-
-        return json(res, 201, { created, raceGroupId, demoRepo });
+        const out = await dispatchBatch({
+          workers: ['codex', 'claude', 'agy'],
+          goal: '实现高并发滑动窗口/令牌桶 API 限流器 (RateLimiter)',
+          prompt: 'Create a clean TypeScript RateLimiter utility with O(1) memory per active client.',
+          workspace: demoRepo,
+          permission: 'write',
+          simulate: true,
+          reviewer: 'auto',
+        });
+        return json(res, 201, { ...out, demoRepo });
       }
 
-      // 5. Approve & Merge isolated git worktree
       const approveMatch = pathname.match(/^\/api\/tasks\/([^/]+)\/approve$/);
       if (req.method === 'POST' && approveMatch) {
-        const task = store.getTask(approveMatch[1]);
-        if (!task) return json(res, 404, { error: 'Task not found' });
-
-        const mergeRes = approveAndMergeWorktree(task);
-        task.status = 'merged';
-        task.mergedCommit = mergeRes.commitSha ?? null;
-        task.decidedAt = new Date().toISOString();
-        store.upsertTask(task);
-        broadcast({ type: 'task_updated', task });
-        return json(res, 200, { ok: true, task, mergeRes });
+        return json(res, 200, await approveById(approveMatch[1]));
       }
 
-      // 6. Discard / Reject worktree
       const discardMatch = pathname.match(/^\/api\/tasks\/([^/]+)\/discard$/);
       if (req.method === 'POST' && discardMatch) {
-        const task = store.getTask(discardMatch[1]);
-        if (!task) return json(res, 404, { error: 'Task not found' });
-
-        discardWorktree(task);
-        task.status = 'discarded';
-        task.decidedAt = new Date().toISOString();
-        store.upsertTask(task);
-        broadcast({ type: 'task_updated', task });
-        return json(res, 200, { ok: true, task });
+        return json(res, 200, await discardById(discardMatch[1]));
       }
 
-      // 7. Save Telegram / Webhook notification config & test card
+      const cancelMatch = pathname.match(/^\/api\/tasks\/([^/]+)\/cancel$/);
+      if (req.method === 'POST' && cancelMatch) {
+        const taskId = cancelMatch[1];
+        cancelRunningTask(taskId);
+        const task = store.getTask(taskId);
+        if (task) {
+          task.status = 'failed';
+          task.error = 'Cancelled by user';
+          store.upsertTask(task);
+          broadcast({ type: 'task_updated', task });
+        }
+        return json(res, 200, { ok: true });
+      }
+
       if (req.method === 'POST' && pathname === '/api/config') {
         const body = await readJsonBody(req);
         const patch = {};
         if (typeof body.telegramChatId === 'string') patch.telegramChatId = body.telegramChatId.trim();
         if (typeof body.webhookUrl === 'string') patch.webhookUrl = body.webhookUrl.trim();
+        if (typeof body.scanRoot === 'string' && body.scanRoot.trim()) {
+          patch.scanRoots = [body.scanRoot.trim()];
+        }
         if (typeof body.telegramBotToken === 'string' && !body.telegramBotToken.includes('***')) {
           patch.telegramBotToken = body.telegramBotToken.trim();
         }
         store.updateConfig(patch);
-        return json(res, 200, { ok: true });
+        tgDaemon.syncWithConfig();
+        return json(res, 200, { ok: true, tgRemoteActive: tgDaemon.running });
       }
 
       if (req.method === 'POST' && pathname === '/api/config/test-card') {
@@ -228,17 +256,21 @@ export function createForemanServer(store, port = 4788) {
           id: 'TEST-CARD',
           worker: 'codex',
           status: 'awaiting_approval',
-          goal: 'Pocket Foreman 手机拍板通知连通性测试',
+          verifyStatus: 'passed',
+          verifyAttempts: 1,
+          reviewWorker: 'claude',
+          reviewScore: 96,
+          reviewSummary: '双向长轮询遥控已打通！在 Telegram 中可直接点击按钮合并或发 /task <项目名> <目标> 远程派单。',
+          goal: 'Pocket Foreman v2.0 双向口袋遥控连通性测试',
           branchName: 'foreman/TEST-CARD',
           changedFiles: ['M src/index.ts'],
           durationSec: 4.2,
           costUsd: 0.0085,
-          summary: 'Telegram / 飞书卡片推送正常工作！点击下方链接即可在手机浏览器审阅 Diff 并一键合并分支。',
+          summary: 'Autoloop 验收全绿 + 异构双 CLI 交叉审查通过。',
         });
         return json(res, 200, resCard);
       }
 
-      // 8. Static UI Serving (`/` Desktop Mission Control & `/mobile` Pocket Card Deck)
       let fileRel = pathname === '/' || pathname === '/mobile' ? 'index.html' : pathname.slice(1);
       const safePath = path.normalize(path.join(UI_DIR, fileRel));
       if (!safePath.startsWith(UI_DIR) || !fs.existsSync(safePath) || fs.statSync(safePath).isDirectory()) {
@@ -256,6 +288,7 @@ export function createForemanServer(store, port = 4788) {
 
   return {
     server,
+    tgDaemon,
     listen() {
       return new Promise((resolve, reject) => {
         server.on('error', reject);
@@ -265,6 +298,10 @@ export function createForemanServer(store, port = 4788) {
           resolve({ port: actualPort, mobileUrl: notifier.getMobileUrl() });
         });
       });
+    },
+    close() {
+      tgDaemon.stop();
+      server.close();
     },
   };
 }

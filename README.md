@@ -5,11 +5,11 @@
   <img src="docs/readme/mobile-approval-deck.png" width="840" alt="Pocket Foreman Mobile Approval Deck (/mobile): thumb-friendly git diff review & 1-tap Merge cards" />
 </p>
 
-# pocket-foreman ⚡（口袋工头）
+# pocket-foreman ⚡ v2.0（口袋工头）
 
-**Zero-dependency multi-CLI coding orchestrator for OpenAI Codex, Claude Code & Google Antigravity — featuring automatic `git worktree` isolation, parallel Arena Races, `ledger.jsonl` cost analytics, and a swipeable Mobile / Telegram Approval Deck.**
+**Zero-dependency multi-CLI coding orchestrator for OpenAI Codex, Claude Code & Google Antigravity — featuring Workspace Project Auto-Discovery, `git worktree` Arena Races, Autoloop Self-Healing Verification, Heterogeneous Cross-CLI Code Review, and Zero-NAT Bidirectional Telegram Remote Control.**
 
-**零外部依赖的跨 CLI 编码并发工头：自动探测本机已登录的 `Codex`、`Claude Code`、`Antigravity`，为每个任务创建独立 `git worktree` 沙箱分支并发执行（支持「同题三方赛马对比」），实时统计 Token 与美元账本，并通过局域网手机卡片页（`/mobile`）或 Telegram / 飞书卡片一键拍板合并！**
+**零外部依赖的跨 CLI 编码并发工头 v2.0：自动扫描纳管工作盘全部项目仓库，自动识别本机 `Codex`、`Claude Code`、`Antigravity`，通过独立 `git worktree`（含零拷贝 `node_modules` 挂载）执行「Autoloop 自动编译测试自愈闭环 + 异构双厂商交叉审查打分」，并支持免公网穿透 Telegram 机器人手机远程派单与一键点击合并！**
 
 ---
 
