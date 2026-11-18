@@ -1,0 +1,18 @@
+{
+  "name": "pocket-foreman",
+  "version": "1.0.0",
+  "description": "Zero-dependency multi-CLI coding orchestrator (Claude Code, Codex, Antigravity) with git-worktree isolation, Arena Race mode, ledger accounting & mobile approval cards.",
+  "license": "MIT",
+  "repository": "https://github.com/dyc19991225/pocket-foreman",
+  "skills": "./skills/",
+  "author": { "name": "dyc19991225" },
+  "interface": {
+    "displayName": "Pocket Foreman",
+    "shortDescription": "Parallel CLI agent worktree races, cost ledger & mobile approval deck.",
+    "longDescription": "Coordinate local Claude Code, OpenAI Codex, and Google Antigravity CLIs in isolated git worktrees with live SSE diff inspection, token/USD accounting, and phone/Telegram merge cards.",
+    "developerName": "dyc19991225",
+    "category": "Developer Tools",
+    "capabilities": [],
+    "defaultPrompt": "Use $pocket-foreman to orchestrate parallel coding tasks in isolated git worktrees."
+  }
+}

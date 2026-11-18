@@ -1,0 +1,4 @@
+interface:
+  display_name: "Pocket Foreman"
+  short_description: "Multi-CLI git-worktree orchestrator, Arena Race & mobile approval cards"
+  default_prompt: "Use $pocket-foreman to check available local coding CLIs and dispatch a parallel git-worktree Arena Race or start the Mission Control dashboard."

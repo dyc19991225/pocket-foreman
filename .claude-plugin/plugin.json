@@ -1,0 +1,8 @@
+{
+  "name": "pocket-foreman",
+  "description": "Zero-dependency multi-CLI coding orchestrator (Claude Code, Codex, Antigravity) with git-worktree isolation, Arena Race mode, ledger accounting & mobile approval cards.",
+  "version": "1.0.0",
+  "author": { "name": "dyc19991225" },
+  "license": "MIT",
+  "skills": "./skills/"
+}

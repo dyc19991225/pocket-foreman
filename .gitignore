@@ -1,0 +1,5 @@
+node_modules
+.foreman
+.DS_Store
+*.log
+.env

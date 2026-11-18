@@ -1,0 +1,30 @@
+{
+  "name": "pocket-foreman",
+  "version": "1.0.0",
+  "description": "Zero-dependency multi-CLI coding agent orchestrator (Claude Code, Codex, Antigravity) with git-worktree isolation, Arena Race mode, token/cost ledger, and mobile/Telegram approval cards.",
+  "license": "MIT",
+  "type": "module",
+  "bin": {
+    "pocket-foreman": "./bin/pocket-foreman.mjs",
+    "foreman": "./bin/pocket-foreman.mjs"
+  },
+  "scripts": {
+    "start": "node bin/pocket-foreman.mjs up",
+    "doctor": "node bin/pocket-foreman.mjs doctor",
+    "test": "node tests/test-foreman.mjs"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "keywords": [
+    "claude-code",
+    "codex",
+    "antigravity",
+    "multi-agent",
+    "orchestrator",
+    "git-worktree",
+    "token-ledger",
+    "telegram-bot",
+    "developer-tools"
+  ]
+}
