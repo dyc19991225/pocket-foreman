@@ -1,3 +1,10 @@
+<p align="center">
+  <img src="docs/readme/desktop-mission-control.png" width="900" alt="Pocket Foreman Desktop Mission Control: 3-way parallel git-worktree Arena Race across Codex, Claude Code & Antigravity with live token/USD ledger and unified diff inspector" />
+</p>
+<p align="center">
+  <img src="docs/readme/mobile-approval-deck.png" width="840" alt="Pocket Foreman Mobile Approval Deck (/mobile): thumb-friendly git diff review & 1-tap Merge cards" />
+</p>
+
 # pocket-foreman ⚡（口袋工头）
 
 **Zero-dependency multi-CLI coding orchestrator for OpenAI Codex, Claude Code & Google Antigravity — featuring automatic `git worktree` isolation, parallel Arena Races, `ledger.jsonl` cost analytics, and a swipeable Mobile / Telegram Approval Deck.**
